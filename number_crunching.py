@@ -30,7 +30,7 @@ class Zip:
         self.records.append([creation_date, completion_date, status])
         self.total_requests += 1
 
-    def compute_stats(self, ignore_old_requests=False, request_year_threshold=2005):
+    def compute_stats(self, ignore_old_requests=True, request_year_threshold=2010):
 
         self.completed_requests = 0
         self.uncompleted_requests = 0
@@ -40,7 +40,7 @@ class Zip:
 
             creation_date = datetime.datetime.strptime(rec[0], '%m/%d/%Y')
 
-            if ignore_old_requests and creation_date.year < request_year_threshold:
+            if ignore_old_requests and int(creation_date.year) < int(request_year_threshold):
                 continue
 
             if rec[2] != "Completed":
@@ -55,7 +55,7 @@ class Zip:
         if len(self.response_times) > 0:
             self.avg_response_time = mean(self.response_times)
         else:
-            self.avg_response_time = 'N/A'
+            self.avg_response_time = 0
 
         if len(self.response_times) > 1:
             self.stdev_of_response_times = stdev(self.response_times)
@@ -83,10 +83,12 @@ def main():
 
     '''
 
+
+
     ignore_old_requests = True
-    request_year_threshhold = 2005
     use_historical_data = True
     use_current_data = True
+    request_year_threshhold = 2015
 
     historical_fname = '311_Service_Requests_-_Graffiti_Removal_-_Historical.csv'
     current_fname = '311_Service_Requests.csv'
@@ -113,9 +115,9 @@ def main():
     completion_headers = ['Completion Date', 'CLOSED_DATE']
     status_headers = ['Status', 'STATUS']
 
-    file_list = []
-    if use_historical_data: file_list.append(0)
-    if use_current_data: file_list.append(1)
+    file_list = [0,1]
+    # if use_historical_data: file_list.append(0)
+    # if use_current_data: file_list.append(1)
 
     for i in [0,1]:
         with open(fnames[i], newline='') as dataset:
@@ -143,6 +145,8 @@ def main():
                 zips[zipcode].add_record(row[creation_headers[i]],row[completion_headers[i]],
                                          row[status_headers[i]], i == 0)
 
+
+    print('writing for ', request_year_threshhold)
     # get averages and standard deviations
 
     final_data = []
