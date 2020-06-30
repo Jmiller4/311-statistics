@@ -91,7 +91,7 @@ def main():
     request_year_threshhold = 2015
 
     historical_fname = '311_Service_Requests_-_Graffiti_Removal_-_Historical.csv'
-    current_fname = '311_Service_Requests.csv'
+    current_fname = '311_Service_Requests_-_Graffiti_Removal.csv'
 
     if not use_current_data and not use_current_data:
         exit()
