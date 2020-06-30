@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tables-pod      #What your Kubernetes pod will be called
+  namespace: mali92
+spec:
+  containers:
+  - image:  iridium.evl.uic.edu:5000/tables-pod:latest       #Link to your docker image
+    imagePullPolicy: Always
+    name: tables-pod       #Name of your container inside your pod
+    resources:
+      limits:
+        nvidia.com/gpu: 4      #Desired number of GPUs
+  restartPolicy: Always
+  nodeSelector:
+    kubernetes.io/hostname: compaassilver06
+
