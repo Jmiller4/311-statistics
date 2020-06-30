@@ -1,8 +1,4 @@
-## Table Codes from ACS
-
-I'll make this another page linked here.
-
-[Table Codes](https://www.notion.so/Table-Codes-99d828f7bf3044439c15195d1a95e5b8)
+## [Table Codes from ACS](https://www.notion.so/Table-Codes-99d828f7bf3044439c15195d1a95e5b8)
 
 We are, for the moment, focusing on two of these tables: 01 Age and Sex, and 02 Race.
 
