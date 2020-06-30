@@ -1,8 +1,4 @@
-## Table Codes from ACS
-
-I'll make this another page linked here.
-
-[Table Codes](https://www.notion.so/Table-Codes-99d828f7bf3044439c15195d1a95e5b8)
+## [Table Codes from ACS](https://www.notion.so/Table-Codes-99d828f7bf3044439c15195d1a95e5b8)
 
 We are, for the moment, focusing on two of these tables: 01 Age and Sex, and 02 Race.
 
@@ -14,4 +10,4 @@ We are, for the moment, focusing on two of these tables: 01 Age and Sex, and 02 
     - [B03002](https://censusreporter.org/tables/B03002/): Hispanic/Not Hispanic with White alone, Black alone, etc.
 
 
-> **Note:** This tables, B01001, C02003, and B03002, were downloaded on a local machine. There is a possibility that some tables failed to download when the internet connection dropped a couple of times. If you find a table missing, please let me know.
+> **Note:** The tables, B01001, C02003, and B03002, were downloaded on a local machine. There is a possibility that some tables failed to download when the internet connection dropped a couple of times. If you find a table missing, please let me know.
