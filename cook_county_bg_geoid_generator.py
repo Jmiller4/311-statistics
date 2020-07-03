@@ -4,7 +4,7 @@ import shapefile
 This code will generate a file called 'cook_county_bg_geoids.txt', 
 containing the geoids of every block group in cook county.
 
-Note: this code expects the most recent TIGER/Line shapefiles for Illinois 
+this code expects the most recent TIGER/Line shapefiles for Illinois 
 (downloadable at https://www.census.gov/cgi-bin/geo/shapefiles/index.php)
 to be unzipped in a directory called "shapefiles".
 '''
