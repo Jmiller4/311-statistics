@@ -15,7 +15,6 @@ cook_county_fp = '031'
 sf = shapefile.Reader("shapefiles/tl_2019_17_bg")
 bg_data = sf.shapeRecords()
 
-# open the file we're writing to
 with open('cook_county_bg_geoids.txt', 'w') as f:
     for x in bg_data:
         if x.record.COUNTYFP == cook_county_fp:

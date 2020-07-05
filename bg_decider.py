@@ -31,14 +31,15 @@ class bg_decider:
                 self.bgs_with_polygons.append(bg_with_polygon(x, Polygon(x.shape.points)))
 
 
-    def decide_bg(self, coord_1, coord_2, returnmode='geoid'):
+    def decide_bg(self, latitude, longitude, returnmode='geoid'):
 
         if returnmode not in ['geoid', 'object', 'bg id']:
             raise NotImplementedError('return mode ' + returnmode + ' is not valid.')
 
-        point = Point(coord_1, coord_2)
+        point = Point(longitude, latitude)
         for bg_w_poly in self.bgs_with_polygons:
             if point.within(bg_w_poly.polygon):
+
 
                 if returnmode == 'geoid':
                     return bg_w_poly.bg.record.GEOID
@@ -47,4 +48,6 @@ class bg_decider:
                 if returnmode == 'bg id':
                     return bg_w_poly.bg.record.BLKGRPCE
 
+        print(latitude, longitude, 'outside of cook county')
         return None
+        # raise ValueError(str(latitude) + " " + str(longitude) + " not found within a block group in illinois")
