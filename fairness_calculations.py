@@ -1,5 +1,8 @@
 import numpy as np
 import pandas as pd
+import csv
+import datetime
+
 count_syntax = ' - count'
 
 class calculator:
@@ -31,21 +34,29 @@ class calculator:
         '''
 
 
-        r = self.response_times[request_type]
+        response_times_vector = self.response_times[request_type]
 
-        d = self.demographics[demographic + count_syntax]
+        demographics_vector = self.demographics[demographic + count_syntax]
 
-        combination = pd.concat([r,d], axis=1)
+        raw_pop_sum = demographics_vector.sum()
 
-        combination = combination.dropna(axis=0, subset=['GRAF'])
+        # we need to get rid of the block groups that haven't made a 311 call for the request type
+        # importantly, we need to take those block groups out of both vectors
+        # there might be a more efficient or cleaner way to do this
 
-        bg_populations = combination[demographic + count_syntax]
-        bg_responsetimes = combination[request_type]
+        for_cleaning = pd.concat([response_times_vector,demographics_vector], axis=1)
+        for_cleaning = for_cleaning.dropna(axis=0, subset=[request_type])
+        pop_vec_cleaned = for_cleaning[demographic + count_syntax]
+        resp_vec_cleaned = for_cleaning[request_type]
+
+        s = pop_vec_cleaned.sum()
 
         if returnmode == 'avg':
-            return(bg_populations.dot(bg_responsetimes) / bg_populations.sum())
+            if s == 0: return None
+            return(pop_vec_cleaned.dot(resp_vec_cleaned) / s)
         elif returnmode == 'detail':
-            return(bg_populations.dot(bg_responsetimes), bg_populations.sum())
+            if s == 0: return None, raw_pop_sum
+            return(pop_vec_cleaned.dot(resp_vec_cleaned) / s, raw_pop_sum)
 
 
         # I used the below code to double-check that all the  pandas functions were working as intended
@@ -80,14 +91,47 @@ class calculator:
         total_pop_sum = 0
 
         for demographic in demo_list:
-            dot_prod, pop_sum = self.get_avg_by_demo_and_request_type(demographic, request_type, returnmode='detail')
-            sum += dot_prod * pop_sum
-            total_pop_sum += pop_sum
+            avg_time, raw_pop_sum = self.get_avg_by_demo_and_request_type(demographic, request_type, returnmode='detail')
 
+            if avg_time is not None:
+                sum += avg_time * raw_pop_sum
+                total_pop_sum += raw_pop_sum
+
+        if sum == 0: return None
         return sum / total_pop_sum
 
+def produce_table():
+    request_frame = pd.read_csv('service_request_short_codes.csv')
 
-x = calculator()
-print(x.get_avg_by_demo_and_request_type('B03002002','GRAF'))
+    request_codes = request_frame.set_index('SR_SHORT_CODE').T.to_dict('records')[0]
+    # request_codes is a dict with 311 short codes as keys and human-readable descriptions as values
 
-print(x.get_avg_by_demo_and_request_type('B03002012','GRAF'))
+    with open("broad_demographic_categories.csv") as f:
+        reader = csv.reader(f)
+        demo_codes = {row[0]: row[1:] for row in reader}
+
+    # demo_codes is a dict with human-readable demographic descriptions as keys and  lists of census codes as values
+
+    # dataframe to put our results in
+    frame = pd.DataFrame(columns=request_codes.values(), index=list(demo_codes.keys()))
+
+    # make a calculator object to do the calculations
+    c = calculator()
+
+    # populate the dataframe
+    for request_code in list(request_codes.keys()):
+        for demographic in list(demo_codes.keys()):
+            avg_time_in_sec = c.get_avg_across_demographics(demo_codes[demographic],request_code)
+
+            if avg_time_in_sec is None:
+                #this can happen if, among the block groups that have put out 311 calls of type request_code, no members of the demographic live in that block group.
+                # for example, no indigenous non-hispanic people live in any block group that has put out an "inacurate retail scales" 311 request.
+                frame.loc[demographic, request_codes[request_code]] = 'N/A'
+            else:
+                delta = datetime.timedelta(seconds=avg_time_in_sec)
+                frame.loc[demographic, request_codes[request_code]] = str(delta)
+
+    # save the dataframe
+    frame.to_csv('average response times by demographic and request type.csv')
+
+produce_table()
