@@ -132,6 +132,6 @@ def produce_table():
                 frame.loc[demographic, request_codes[request_code]] = str(delta)
 
     # save the dataframe
-    frame.to_csv('average response times by demographic and request type.csv')
+    frame.to_csv('avg_times_by_demo_and_type.csv')
 
 produce_table()
