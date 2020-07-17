@@ -3,34 +3,9 @@ import numpy as np
 import datetime as dt
 import math
 
-def append_queue_cuts(df, bucket_col, new_col):
-    '''this function takes a dataframe of 311 requests with rows sorted by completion time,
-       and the name of a column containing bucket info. it appends the dataframe with a new
-       column containing, for each row, the number of rows above it in the dataset with a *higher* bucket value.'''
-
-    # time complexity: length of list * number of buckets
-    d = {}
-    for row in df.index:
-        b = df.loc[row, bucket_col]
-        if b not in d.keys():
-            d[b] = 1
-        else:
-            d[b] += 1
-        violations = 0
-        # for each iteration (over the rows), d[k] gives the number of items in bucket k that we've already seen.
-        # so if item i has bucket value b < k, and d[k] has been initialized, then d[k] items (from bucket k) unfairly went before item i.
-        # do this with all buckets k, and you get the total number of items that unfairly went before item i.
-        for k in d.keys():
-            if b < k:
-                violations += d[k]
-        df.loc[row, new_col] = violations
-    return df
-
-
-
 # this will be used to convert strings into datetime objects
 dt_format = '%m/%d/%Y %I:%M:%S %p'
-
+#
 early_date = dt.datetime(2018,6,20,0,0,0,0)
 # the earliest request in the dataset was made on july 1st 2018, so this date is before every request in the dataset.
 # a bucket number is the number of full (1SEC, 1HR, 3HR, 6HR, 24HR) periods since this date/time.
@@ -53,90 +28,59 @@ def append_buckets():
                                    'BLOCK_GROUP': np.str},
                             index_col=None)
 
-        frame['CREATED_DATE_SEC'] = frame.apply(lambda row: (dt.datetime.strptime(row['CREATED_DATE'],dt_format) - early_date).total_seconds(), axis=1)
+        frame['CR_BUCKET_1SEC'] = frame.apply(lambda row: (dt.datetime.strptime(row['CREATED_DATE'],dt_format) - early_date).total_seconds(), axis=1)
 
         frame['CLOSED_DATE_SEC'] = frame.apply(
             lambda row: (dt.datetime.strptime(row['CLOSED_DATE'], dt_format) - early_date).total_seconds(), axis=1)
 
-        frame['CR_BUCKET_1HR']  = frame.apply(lambda row: math.floor(row['CREATED_DATE_SEC'] / 3600),      axis=1)
-        frame['CR_BUCKET_3HR']  = frame.apply(lambda row: math.floor(row['CREATED_DATE_SEC'] /(3600 * 3)),  axis=1)
-        frame['CR_BUCKET_6HR']  = frame.apply(lambda row: math.floor(row['CREATED_DATE_SEC'] /(3600 * 6)),  axis=1)
-        frame['CR_BUCKET_24HR'] = frame.apply(lambda row: math.floor(row['CREATED_DATE_SEC'] /(3600 * 24)), axis=1)
+        frame['CR_BUCKET_1HR']  = frame.apply(lambda row: math.floor(row['CR_BUCKET_1SEC'] / 3600),      axis=1)
+        frame['CR_BUCKET_3HR']  = frame.apply(lambda row: math.floor(row['CR_BUCKET_1SEC'] /(3600 * 3)),  axis=1)
+        frame['CR_BUCKET_6HR']  = frame.apply(lambda row: math.floor(row['CR_BUCKET_1SEC'] /(3600 * 6)),  axis=1)
+        frame['CR_BUCKET_24HR'] = frame.apply(lambda row: math.floor(row['CR_BUCKET_1SEC'] /(3600 * 24)), axis=1)
 
         frame.to_csv(r"311 data buckets\311_buckets_" + code + ".csv", index=False)
 
-def calculate_fifo_violations_for_all_datasets():
+def calculate_displacement_for_rows(df, bucket_col, new_col):
+    vc = df[bucket_col].value_counts()
+    vc = vc.sort_index()
+    vcs = vc.cumsum()
+
+    acceptable = {}
+    lower = 0
+    for x in vcs.index:
+        acceptable[x] = {}
+        acceptable[x]['start'] = lower
+        acceptable[x]['end'] = vcs[x]
+        lower = vcs[x] + 1
+
+    df['acc_start'] = df.apply(lambda row: acceptable[row[bucket_col]]['start'], axis=1)
+    df['acc_end'] = df.apply(lambda row: acceptable[row[bucket_col]]['end'], axis=1)
+
+    df[new_col] = df.apply(lambda row: (row['ORDER'] - row['acc_end']) * (row['ORDER'] > row['acc_end'])
+                                              + (row['ORDER'] - row['acc_start']) * (row['ORDER'] < row['acc_start'])
+                                  , axis=1)
+
+    df.drop(columns=['acc_start', 'acc_end'], inplace=True)
+
+    return df
+
+def append_datasets_with_displacements():
 
     request_types = pd.read_csv('service_request_short_codes.csv')
     sr_codes = [x[0] for x in request_types[['SR_SHORT_CODE']].values]
 
     for code in sr_codes:
-
         print(code)
 
-        frame = pd.read_csv(r"311 data buckets\311_buckets_" + code + ".csv",
-                            dtype={'CITY': np.str, 'STATE': np.str, 'ZIP_CODE': np.str,
-                                   'STREET_NUMBER': np.str, 'LEGACY_SR_NUMBER': np.str,
-                                   'PARENT_SR_NUMBER': np.str, 'SANITATION_DIVISION_DAYS': np.str,
-                                   'BLOCK_GROUP': np.str},
-                            index_col=None)
+        frame = pd.read_csv(r"311 data by request type\311_" + code + ".csv", index_col=None, dtype={'CITY':np.str, 'STATE':np.str, 'ZIP_CODE':np.str, 'STREET_NUMBER':np.str, 'LEGACY_SR_NUMBER':np.str, 'PARENT_SR_NUMBER':np.str, 'SANITATION_DIVISION_DAYS':np.str})
 
-        frame = frame.sort_values(by=['CLOSED_DATE_SEC'])
+        frame.sort_values(by=['CLOSED_DATE_SEC'],inplace=True)
+        frame.reset_index(drop=True, inplace=True)
+        frame['ORDER'] = frame.index
 
-        bucket_lengths = ['1HR', '3HR', '6HR', '24HR']
+        for b_size in ['1SEC','1HR','3HR','6HR','24HR']:
+            frame = calculate_displacement_for_rows(frame, 'CR_BUCKET_' + b_size, 'CR_BUCKET_' + b_size + '_DISPLACEMENT')
 
-        for l in bucket_lengths:
-            frame = append_queue_cuts(frame, 'CR_BUCKET_'+l, 'CR_BUCKET_'+l+'_WAIT_TIME')
+        frame.to_csv(r"311 data by request type\311_" + code + ".csv", index=False)
 
-        frame = append_queue_cuts(frame, 'CREATED_DATE_SEC', 'CR_BUCKET_1SEC_WAIT_TIME')
-
-        frame.to_csv(r"311 data buckets\311_buckets_" + code + ".csv", index=False)
-
-
-# calculate_fifo_violations_for_all_datasets()
-
-
-
-'''
-What follows is UNUSED code to find the number of inversions in a list.
-pretty much a slight modification of mergesort
-i wrote this thinking it might faster than the other way of counting cue cuts
-due to mergesort's n * log n runtime.
-HOWEVER, it actually ran much slower, on my machine at least.
-'''
-def count_inversions(l, frame, bucket_col, inv_col):
-    split_point = len(l)//2
-    frame[inv_col] = [0] * len(frame)
-    list, inversions, frame = count_inversions_helper(l[:split_point], l[split_point:], frame, bucket_col, inv_col)
-    return inversions, frame
-
-def count_inversions_helper(left, right, frame, bucket_col, inv_col):
-
-    l_inversions, r_inversions = 0, 0
-
-    if len(left) > 1:
-        left_split = len(left)//2
-        left, l_inversions, frame = count_inversions_helper(left[:left_split], left[left_split:], frame, bucket_col, inv_col)
-
-    if len(right) > 1:
-        right_split = len(right) // 2
-        right, r_inversions, frame = count_inversions_helper(right[:right_split], right[right_split:], frame, bucket_col, inv_col)
-
-    merged_list = []
-    inversions = l_inversions + r_inversions
-    while len(left) > 0 and len(right) > 0:
-        if frame.loc[left[0], bucket_col] <= frame.loc[right[0], bucket_col]:
-            merged_list.append(left.pop(0))
-        else:
-            frame.loc[right[0], inv_col] += len(left)
-            inversions += len(left)
-            merged_list.append(right.pop(0))
-
-
-    if len(left) == 0:
-        merged_list.extend(right)
-    else:
-        merged_list.extend(left)
-    return merged_list, inversions, frame
-
-
+append_datasets_with_displacements()

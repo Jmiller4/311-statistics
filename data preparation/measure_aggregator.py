@@ -63,15 +63,15 @@ def make_averages_table(column, path_prefix, output_path):
     # save the averages
     averages.to_csv(output_path)
 
-def make_tables_for_bucket_fifo_violations():
+def make_tables_for_bucket_queue_displacement():
 
-    bucket_lengths = ['1HR', '3HR', '6HR', '24HR']
+    bucket_lengths = ['1SEC', '1HR', '3HR', '6HR', '24HR']
 
     for l in bucket_lengths:
-        make_averages_table('CR_BUCKET_'+l, '311 data buckets/311_buckets_', 'bg_average_violations' + l + '.csv')
+        make_averages_table('CR_BUCKET_' + l + '_WAIT_TIME', '311 data buckets/311_buckets_', 'bg_average_violations' + l + '.csv')
 
-    make_averages_table('CREATED_DATE_SEC',  '311 data buckets/311_buckets_', 'bg_average_violations1SEC.csv')
 
+make_tables_for_bucket_queue_displacement()
 
 '''
 this is a function i used to test some stuff out.
