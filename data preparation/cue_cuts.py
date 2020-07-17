@@ -2,9 +2,12 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 import math
-import time
 
-def append_bucket_violations(df, bucket_col, new_col):
+def append_queue_cuts(df, bucket_col, new_col):
+    '''this function takes a dataframe of 311 requests with rows sorted by completion time,
+       and the name of a column containing bucket info. it appends the dataframe with a new
+       column containing, for each row, the number of rows above it in the dataset with a *higher* bucket value.'''
+
     # time complexity: length of list * number of buckets
     d = {}
     for row in df.index:
@@ -30,10 +33,13 @@ dt_format = '%m/%d/%Y %I:%M:%S %p'
 
 early_date = dt.datetime(2018,6,20,0,0,0,0)
 # the earliest request in the dataset was made on july 1st 2018, so this date is before every request in the dataset.
+# a bucket number is the number of full (1SEC, 1HR, 3HR, 6HR, 24HR) periods since this date/time.
 
 def append_buckets():
 
-    ''' this function appends datasets with created date in seconds and closed date in seconds (measured from a hand-picked date from before the dataset began)'''
+    ''' this function appends datasets with created date in seconds and closed date in seconds (measured from a hand-picked date from before the dataset began).
+    it also datasets with their "bucket numbers" for other bucket sizes.
+    '''
 
     request_types = pd.read_csv('service_request_short_codes.csv')
     sr_codes = [x[0] for x in request_types[['SR_SHORT_CODE']].values]
@@ -80,9 +86,9 @@ def calculate_fifo_violations_for_all_datasets():
         bucket_lengths = ['1HR', '3HR', '6HR', '24HR']
 
         for l in bucket_lengths:
-            frame = append_bucket_violations(frame, 'CR_BUCKET_'+l, 'CR_BUCKET_'+l+'_WAIT_TIME')
+            frame = append_queue_cuts(frame, 'CR_BUCKET_'+l, 'CR_BUCKET_'+l+'_WAIT_TIME')
 
-        frame = append_bucket_violations(frame, 'CREATED_DATE_SEC', 'CR_BUCKET_1SEC_WAIT_TIME')
+        frame = append_queue_cuts(frame, 'CREATED_DATE_SEC', 'CR_BUCKET_1SEC_WAIT_TIME')
 
         frame.to_csv(r"311 data buckets\311_buckets_" + code + ".csv", index=False)
 
@@ -94,7 +100,7 @@ def calculate_fifo_violations_for_all_datasets():
 '''
 What follows is UNUSED code to find the number of inversions in a list.
 pretty much a slight modification of mergesort
-i wrote this thinking it might faster than the other way of counting fifo violations
+i wrote this thinking it might faster than the other way of counting cue cuts
 due to mergesort's n * log n runtime.
 HOWEVER, it actually ran much slower, on my machine at least.
 '''

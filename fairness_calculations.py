@@ -11,7 +11,7 @@ class calculator:
         self.key_metric_table = pd.DataFrame
         # key_metric_table should be a table with block groups as rows and request types as columns,
         # where index (i,j) is block group i's measure of the metric for requests of type j
-        # (the key metric probably has something to do with average wait time for requests to be fulfilled)
+        # an example of a "key metric" might be average wait time, for example
         self.demographics = pd.read_csv('demographics_table.csv', index_col=0)
 
     def load_table(self, path):
@@ -20,7 +20,8 @@ class calculator:
     def get_avg_by_demo_and_request_type(self, demographic, request_type):
 
         '''
-        details can be found in the pdf
+        details on what's going on here can be found here:
+        https://www.notion.so/311-Statistics-Methodology-46037e1723914c4097db349fd0ca2c40
         '''
 
         key_metric_vector = self.key_metric_table[request_type]
@@ -54,12 +55,8 @@ class calculator:
         # or all pertain to race and ethnicity, but not both. If you ask this function to tell you the average response time for
         # a certain request for white women, for example, it will give you the wrong answer.
 
-        # this function works by calculating
-        # P(you're in demographic x | you're in a demographic in demo_list) * avg response time for the request for people in demographic x + ...,
-        # summing over all x in demo_list.
-
-        # P(you're in demographic x | you're in a demographic in demo_list) is calculated as
-        # number of people in demographic x in the whole city / number of people in any demographic in demo_list in the whole city
+        # the most up-do-date explanation of what's going on here can be found here:
+        # https://www.notion.so/311-Statistics-Methodology-46037e1723914c4097db349fd0ca2c40
 
         sum = 0
         total_pop_sum = 0
@@ -126,11 +123,12 @@ def produce_tables(path_info, demo_path):
         frame.to_csv(x[1])
 
 
-input_path_prefix = 'data preparation/average x by block group/bg_average_violations'
-output_path_prefix = 'avg_queue_cuts'
-bucket_types = ['1HR', '1SEC', '3HR', '6HR', '24HR']
-path_info = zip([input_path_prefix + x + '.csv' for x in bucket_types],[output_path_prefix + y + '.csv' for y in bucket_types])
 
-produce_tables(path_info, "broad_demographic_categories.csv")
+# the below commented-out code is what I used to make the tables of average cue cuts per demographic/ request type.
 
-print(':-D')
+# input_path_prefix = 'data preparation/average x by block group/bg_average_violations'
+# output_path_prefix = 'avg_queue_cuts'
+# bucket_types = ['1HR', '1SEC', '3HR', '6HR', '24HR']
+# path_info = zip([input_path_prefix + x + '.csv' for x in bucket_types],[output_path_prefix + y + '.csv' for y in bucket_types])
+
+# produce_tables(path_info, "broad_demographic_categories.csv")

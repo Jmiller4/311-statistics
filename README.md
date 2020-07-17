@@ -1,5 +1,11 @@
 # 311-statistics
-The main product of this work (so far) is the file "avg_times_by_demo_and_type.csv", which lists average 311 response times for different demographics (rows) and types of 311 requests (columns). "311_stats_methodology.pdf" details my approach to creating that table and "fairness_calculations.py" is the code that produced that table.
+The main product of this work (so far) are the files "avg_times_by_demo_and_type.csv" and "avg_queue_cuts_*.csv". The former gives estimated wait times by demographic and request type, the latter files measure the extent to which requests are de-prioiritized, by demographic and request type, and with varying levels of strictness. 
+
+The "avg_queue_cuts" files measure the extent to which 311 requests are answered on a first-in, first-out basis. Row i, column j of avg_queue_cuts_X.csv gives the average number of requests that will be answered before a request of type j from a member of demographic i, despite coming in after that request, and specifically in an X-long period after that request.   
+
+A more in-depth explanation of the methodology can be found here:
+
+https://www.notion.so/311-Statistics-Methodology-46037e1723914c4097db349fd0ca2c40 
 
 A few python files were used to prepare the tables "bg_averages.csv" and "demographics_table.csv", which were in turn used to calculate the "average response times..." file. To understand how the python files were used, read them in this order:
 1. bg_decider.py
