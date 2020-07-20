@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import datetime as dt
+import time
 
 def make_averages_table(column, path_prefix, output_path):
     '''
@@ -32,107 +33,33 @@ def make_averages_table(column, path_prefix, output_path):
                                 'BLOCK_GROUP':np.str},
                          index_col=0)
 
+        groups = frame.groupby('BLOCK_GROUP')[column]
 
-        # make new frames with just the requests from each block group
-        filtered_frames = {}
-        for bg in geoids:
-            filtered_frames[bg] = frame[frame.BLOCK_GROUP == bg]
+        # sums is a one-column dataframe where the index is block groups and the value is the sum of all "column" values for requests of that block group (where "column" is one of the arguments to this function)
+        sums = groups.sum()
 
-        for bg in geoids:
+        #counts is a one-column dataframe where the index is block groups and the value is the amount of rows in the original dataframe from that block group
+        counts = groups.count()
 
-            f = filtered_frames[bg]
-
-            #find the average of the given metric for the block group, and put that in the dataframe
-
-            #it could be the case that no requests for the given type ever came out of the block group,
-            #so check for that first
-            if len(f) == 0:
-                avg = None
-            else:
-                # get the total request time
-                total = f[column].sum()
-                # calculate the average
-                if total == 0:
-                    avg = 0
-                else:
-                    avg = total / len(f)
-
-            # set the value in the "averages" dataframe
-            averages.loc[bg, code] = avg
+        # find the aveages for each block group, turn it into a series, and make that series a column in our main dataframe
+        averages[code] = (sums/ counts).squeeze()
 
     # save the averages
     averages.to_csv(output_path)
 
-def make_tables_for_bucket_queue_displacement():
 
-    bucket_lengths = ['1SEC', '1HR', '3HR', '6HR', '24HR']
-
-    for l in bucket_lengths:
-        make_averages_table('CR_BUCKET_' + l + '_WAIT_TIME', '311 data buckets/311_buckets_', 'bg_average_violations' + l + '.csv')
-
-
-make_tables_for_bucket_queue_displacement()
-
-'''
-this is a function i used to test some stuff out.
-it's not important.
-'''
-def bucket_cut_test():
-
-    # pretty much, I wrote this function to check that the average "cuts" in line for each block group/ request type pair
-    # are non-increasing as we make the buckets less and less granular
-    # if it printed anything out, that would've been a problem, but it didn't
-
-    bucket_lengths = ['1SEC','1HR', '3HR', '6HR', '24HR']
-    # read in a file to get the block group geo-ids
-    with open('cook_county_bg_geoids.txt') as f:
-        geoids = [i[:-1] for i in f.readlines()] # [:-1] gets rid of the "\n at the end of each line"
-
-    # read in a file to get the request types
-    request_types = pd.read_csv('service_request_short_codes.csv')
-    sr_codes = [x[0] for x in request_types[['SR_SHORT_CODE']].values]
-
-    dfs = {}
-    for x in bucket_lengths:
-        dfs[x] = pd.read_csv('average x by block group/bg_average_violations' + x + '.csv', index_col=0)
-
-    # test this out with the files that list average wait times
-    for g in geoids:
-        g = int(g)
-        for c in sr_codes:
-            if np.isnan(dfs['1SEC'].loc[g, c]):
-                # make sure it's a NaN everywhere else
-                for l in bucket_lengths:
-                    if not np.isnan(dfs[l].loc[g,c]):
-                        print('geoid: ', g, '\ncode: ', c, '\nbucket type: ', l, 'is not NaN even though 1sec version is')
-            else:
-                val = dfs['1SEC'].loc[g,c]
-                for l in bucket_lengths:
-                    new_val = dfs[l].loc[g,c]
-                    #as the buckets get bigger, the number of cuts should decrease or stay the same
-                    if not new_val <= val:
-                        print('geoid: ', g, '\ncode: ', c, '\nbucket type: ', l, 'increases from smaller bucket size')
-                    val = new_val
-
-    # test this out for each individual record
-    wait_time_columns = ['CR_BUCKET_' + x + '_WAIT_TIME' for x in bucket_lengths]
-    for c in sr_codes:
-        df = pd.read_csv('311 data buckets/311_buckets_' + c + '.csv', index_col=0)
-        for x in df.index:
-            val = df.loc[x, 'CR_BUCKET_1SEC_WAIT_TIME']
-            for col in wait_time_columns:
-                new_val = df.loc[x, col]
-                # as the buckets get bigger, the number of cuts should decrease or stay the same
-                if not new_val <= val:
-                    print('code: ', c, '\nsr number: ', x, '\nbucket type: ', col, 'increases from smaller bucket size')
-                val = new_val
+# bucket_lengths = ['1SEC', '1HR', '3HR', '6HR', '24HR']
+#
+# for l in bucket_lengths:
+#     print('~~~~~~~~~~~~~~', l, '~~~~~~~~~~~~~~~')
+#     make_averages_table('CR_BUCKET_' + l + '_DISPLACEMENT', '311 data by request type/311_', 'queue_displacement_' + l + '.csv')
 
 
 '''
 what follows is an early pass at make_averages_table() function.
 i wrote it when I was just interested in calculating the average raw wait time per block group,
 so this code kind of does two things at once.
-also not important. keeping it for posterity?
+also not important. and slow. keeping it for posterity?
 '''
 def first_function():
     '''
