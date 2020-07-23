@@ -6,6 +6,7 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib.figure as fig
 from textwrap import wrap
+from scipy.stats import gaussian_kde
 
 count_syntax = ' - count'
 
@@ -18,15 +19,16 @@ class calculator:
         # an example of a "key metric" might be average wait time, for example
 
         self.demographics = pd.read_csv('data preparation/demographics_table.csv', index_col=0)
+        self.demographics.index = self.demographics.index.astype(np.str)
         self.demographics.fillna(0, inplace=True)
 
         self.request_counts = pd.read_csv('data preparation/request_count_table.csv', index_col=0)
         self.request_counts.fillna(0, inplace=True)
 
-        self.geoids = self.request_counts.index
+        self.geoids = [str(x) for x in self.request_counts.index]
         self.request_types = self.request_counts.columns
 
-        self.meta_demographics = pd.DataFrame
+        self.meta_demographics = pd.DataFrame()
         self.meta_demographic_labels = list
         self.load_meta_demographics(meta_demographics_path)
 
@@ -45,11 +47,9 @@ class calculator:
         for d in demo_codes.keys():
             temp = self.demographics.loc[:,[c + count_syntax for c in demo_codes[d]]]
             temp['sum'] = temp.sum(axis=1)
-
             self.meta_demographics[d] = temp['sum']
 
         for d in self.meta_demographic_labels:
-
             self.meta_demographics[d + ' ratio'] = self.meta_demographics.apply(lambda row: 0 if row['Total'] == 0 else row[d] / row['Total'], axis=1)
 
     def make_table(self, output_path, castastime=False):
@@ -73,7 +73,75 @@ class calculator:
         table.to_csv(output_path, index=True)
 
 
-    def estimate_distributions(self, threshold_n, x_axis_label, scale, write_path_prefix, title_prefix):
+    def estimate_distributions(self, col, scale, title_prefix, x_axis_label,write_path_prefix):
+
+        # get a dictionary mapping short request codes to their human-readable names
+        code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
+
+        # get a list of demographics
+        demos = self.meta_demographic_labels - ['Total']
+
+        # make a graph showing PDFs by demographic for all request types
+        for code in self.request_types:
+            print(code)
+            # read in the data for this request code
+            frame = pd.read_csv('data preparation/311 data by request type/311_' + code + ".csv",
+                                dtype={'CITY': np.str, 'STATE': np.str, 'ZIP_CODE': np.str,
+                                       'STREET_NUMBER': np.str, 'LEGACY_SR_NUMBER': np.str,
+                                       'PARENT_SR_NUMBER': np.str, 'SANITATION_DIVISION_DAYS': np.str,
+                                       'BLOCK_GROUP': np.str},
+                                index_col=0)
+
+            # there are ~20 points across all the data that are right on the border with indiana,
+            # and technically aren't in a block group. somehow at this point the block group for these
+            # guys is just "n". So filter those out.
+            frame = frame[frame['BLOCK_GROUP'] != 'n']
+
+            # scale the points by a constant
+            frame['scaled_vals'] = frame[col] / scale
+
+            # figure out the scale the graph should have
+            min_x = frame['scaled_vals'].min()
+            max_x = frame['scaled_vals'].max()
+
+            # get the matplotlib objects needed to make the graph
+            fig, ax = plt.subplots(figsize=(6, 6.5))
+
+            # make a different PDF for each demographic
+            for d in demos:
+
+                # get weight each point via per-block group demographic data
+                weights = frame.apply(lambda row: self.meta_demographics.loc[row['BLOCK_GROUP'], d + ' ratio'], axis=1)
+
+                # figurue out how many "people" we have
+                effective_n = weights.sum().round(2)
+
+                # only make a distribution if there's enough data to do so
+                if effective_n > 1:
+                    # do a density estimate to get a kernel
+                    kernel = gaussian_kde(frame['scaled_vals'], weights=weights)
+                    # make points to evaluate the kernel on
+                    ind = np.linspace(min_x, max_x, 200)
+                    # create the label for the kernel
+                    label = f'{d} (n = {effective_n})'
+                    # plot the kernel as a probability density function
+                    ax.plot(ind, kernel.evaluate(ind), label=label)
+
+            # formatting stuff
+            ax.legend()
+            title = f'{title_prefix} for {code_dict[code]}  requests (code {code})'
+            plt.title('\n'.join(wrap(title, 60)))
+            plt.xlabel(x_axis_label)
+            box = ax.get_position()
+            ax.set_position([box.x0, box.y0 + box.height * 0.2, box.width, box.height * 0.80])
+            ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), fancybox=True, shadow=True)
+
+            # save as an image
+            plt.savefig(f'{write_path_prefix}{code}.png')
+            plt.close('all')
+
+
+    def estimate_distributions_noweights(self, threshold_n, x_axis_label, scale, write_path_prefix, title_prefix):
 
         # grab a mapping from request codes to human-readable names (used for labeling the distributions)
         code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
@@ -108,7 +176,7 @@ class calculator:
                 continue
 
 
-            t =  title_prefix + ' for ' + code_dict[code] + ' requests (code ' + code + ')'
+            t =  f'{title_prefix} for {code_dict[code]}  requests (code {code})'
 
             # otherwise, put the points into a dataframe and PLOT that mf
             df = pd.DataFrame(points2)
@@ -127,7 +195,6 @@ class calculator:
 
             plt.savefig(write_path_prefix + code + '.png')
             plt.close('all')
-
 
     #
     # def make_histograms(self):
@@ -168,7 +235,6 @@ class calculator:
     #         new_frame.replace(to_replace=0, value=np.nan, inplace=True)
     #         new_frame.plot()
     #         plt.show()
-
 
     def get_avg_by_demo_and_request_type_old(self, demographic, request_type):
 
@@ -239,13 +305,15 @@ path_info = zip([input_path_prefix + x + '.csv' for x in bucket_types], [output_
 
 
 c = calculator()
-#
-# c.load_metric_table(a1[0])
-#c.estimate_distributions(4, 'wait time (days)',24 * 60 * 60, 'raw wait time distributions/wait_time_dist_', 'Wait time distribution ')
+c.estimate_distributions('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/311_')
 
-for x in bucket_types:
-    c.load_metric_table(input_path_prefix + x + '.csv')
-    c.estimate_distributions(4, 'displacement in queue (positive = pushed back)', 1, 'queue displacement distributions/' + x + ' buckets/displacement_dist_' + x + '_', 'displacement distribution (' + x + ' buckets)')
+
+# c.load_metric_table(a1[0])
+#c.estimate_distributions(4, 'wait time (days)',24 * 60 * 60, 'wait time distributions -- fuzzy method/wait_time_dist_', 'Wait time distribution ')
+
+# for x in bucket_types:
+#     c.load_metric_table(input_path_prefix + x + '.csv')
+#     c.estimate_distributions(4, 'displacement in queue (positive = pushed back)', 1, 'queue displacement distributions/' + x + ' buckets/displacement_dist_' + x + '_', 'displacement distribution (' + x + ' buckets)')
 #for l in bucket_types:
 
 # for x in path_info:
