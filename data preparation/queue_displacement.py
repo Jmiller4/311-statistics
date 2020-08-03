@@ -48,9 +48,10 @@ def calculate_displacement_for_all_rows(df, bucket_col, new_col):
     # here's how this works.
     # for each bucket, we calculate the part of the output queue that requests from that bucket would occupy.
     # for example, if we're working with 1-hour buckets and 5 requests come in 12-1PM and 10 requests come in from 1-2PM,
-    # we'd expect to see the 12-1PM completed 0-4th, and the 1-2PM requests completed 4-15th.
+    # we'd expect to see the 12-1PM requests completed 0-4th, and the 1-2PM requests completed 4-15th.
 
-    # then we compare each request's completion time with the "acceptable range" for requests in that bucket
+    # then we compare each request's completion spot (stored in the "ORDER" column)
+    # with the "acceptable range" for requests in that bucket.
     # if the request is completed inside the range, it is given a displacement of 0
     # if the request is completed after the end of the range, it is given a displacement of (request's spot in queue) - (the end of the range)
     # if the request is completed before the beginning of the range, its displacement is (request's spot in queue) - (the beginning of the range)
@@ -58,12 +59,13 @@ def calculate_displacement_for_all_rows(df, bucket_col, new_col):
     # keeping with the above example, if a 12-1PM request was completed 11th, it would get a displacement of 11 - 4 = 7
     # and if a 1-2PM request was completed 2nd, it would get a displacement of 2 - 5 = -3.
 
-    # get the number of requests in each bucket. vc is a pandas series where each index is a bucket number and the actual element
+
+    # first, get the number of requests in each bucket. vc is a pandas series where each index is a bucket number and the actual element
     # is the number of requests in that bucket
     vc = df[bucket_col].value_counts()
 
     # calculate the acceptable range for each bucket
-    # there is probably a way to do this more quickly via pandas...
+    # there is probably a way to do this more quickly...
     vc = vc.sort_index()
     vcs = vc.cumsum()
 

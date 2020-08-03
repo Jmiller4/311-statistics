@@ -92,7 +92,7 @@ class calculator:
         table.to_csv(output_path, index=True)
 
 
-    def estimate_distribution(self, code, col, scale, title_prefix, x_axis_label,write_path_prefix, graph_scale_percentile=100):
+    def estimate_distribution(self, code, col, title_prefix, x_axis_label,write_path_prefix, scale=1, lower_percentile=0, upper_percentile=100):
 
         # get a dictionary mapping short request codes to their human-readable names
         code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
@@ -115,8 +115,13 @@ class calculator:
         frame['scaled_vals'] = frame[col] / scale
 
         # figure out the scale the graph should have
-        min_x = frame['scaled_vals'].min()
-        max_x = frame['scaled_vals'].quantile(q=graph_scale_percentile / 100)
+        min_x = frame['scaled_vals'].quantile(q=lower_percentile / 100)
+        max_x = frame['scaled_vals'].quantile(q=upper_percentile / 100)
+
+        if min_x == max_x:
+            print(f'for code {code}, column {col}, lower percentile {lower_percentile} and upper percentile {upper_percentile}, data has same minimum and maximum value: {min_x} -- so cannot make a distribution')
+            return
+
 
         # get the matplotlib objects needed to make the graph
         fig, ax = plt.subplots(figsize=(6, 6.5))
@@ -148,8 +153,8 @@ class calculator:
         # formatting stuff
         ax.legend()
         title = f'{title_prefix} for {code_dict[code]}  requests (code {code})'
-        if graph_scale_percentile != 100:
-            title += f', graph covers {graph_scale_percentile}th percentile'
+        if upper_percentile != 100 or lower_percentile != 0:
+            title += f', graph covers {upper_percentile}th percentile'
         plt.title('\n'.join(wrap(title, 60)))
         plt.xlabel(x_axis_label)
         box = ax.get_position()
@@ -161,19 +166,19 @@ class calculator:
         # first, take the slashes out of the code description
         code_description = code_dict[code].replace('/', '(slash)')
         fname = f'{write_path_prefix}{code_description}'
-        if graph_scale_percentile != 100:
-            fname += f'_{graph_scale_percentile}'
+        if upper_percentile != 100 or lower_percentile != 0:
+            fname += f'_{upper_percentile}'
         fname += '.png'
         plt.savefig(fname)
         plt.close('all')
 
 
-    def estimate_distributions_for_all_requests(self, col, scale, title_prefix, x_axis_label,write_path_prefix, graph_scale_percentile=100):
+    def estimate_distributions_for_all_requests(self, col, title_prefix, x_axis_label,write_path_prefix, scale=1, lower_percentile=0, upper_percentile=100):
 
         # make a graph showing PDFs by demographic for all request types
         for code in self.request_types:
             print(code)
-            self.estimate_distribution(code, col, scale, title_prefix, x_axis_label, write_path_prefix, graph_scale_percentile)
+            self.estimate_distribution(code, col, title_prefix, x_axis_label, write_path_prefix, scale=scale, upper_percentile=upper_percentile, lower_percentile=lower_percentile)
 
 
     def estimate_distributions_noweights(self, threshold_n, x_axis_label, scale, write_path_prefix, title_prefix):
@@ -236,7 +241,7 @@ class calculator:
 
 input_path_prefix = 'data preparation/average x by block group/queue_displacement_'
 output_path_prefix = 'avg_queue_displacement_'
-bucket_types = ['3HR', '6HR', '24HR']
+bucket_types = ['1SEC', '1HR', '3HR', '6HR', '24HR']
 
 a1 = ['data preparation/average x by block group/bg_averages_raw_time.csv']
 a2 = ['avg_raw_wait_time.csv']
@@ -245,8 +250,16 @@ path_info = zip([input_path_prefix + x + '.csv' for x in bucket_types], [output_
 
 
 c = calculator()
-c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/')
-c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/', graph_scale_percentile=95)
+
+for b in bucket_types:
+    c.estimate_distributions_for_all_requests(f'CR_BUCKET_{b}_DISPLACEMENT',
+                                              f'queue displacement distribution-{b}- ',
+                                              'displacement (late = positive, early = negative)',
+                                              f'queue displacement distributions/{b}/',
+                                              upper_percentile=95)
+
+# c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/')
+# c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/', graph_scale_percentile=95)
 
 # c.load_metric_table(a1[0])
 #c.estimate_distributions(4, 'wait time (days)',24 * 60 * 60, 'wait time distributions -- fuzzy method/wait_time_dist_', 'Wait time distribution ')
