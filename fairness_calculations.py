@@ -36,6 +36,8 @@ class calculator:
         self.line_colors = {}
         self.load_meta_demographics(meta_demographics_path)
 
+        self.kernels = {}
+
     def load_metric_table(self, path):
         self.key_metric_table = pd.read_csv(path, index_col=0)
         self.key_metric_table.fillna(0, inplace=True)
@@ -45,6 +47,11 @@ class calculator:
             reader = csv.reader(f)
             self.demo_codes = {row[0]: row[1:] for row in reader}
             self.demographic_labels = list(self.demo_codes.keys())
+
+        # meta_demographics_table is a dataframe with block groups as rows and "meta-demographics" (groups of disjoint ACS demographics) as columns
+        # specifically, for each block group and each meta-demographic, we want to get the FRACTION of people in that block group
+        #
+
         self.meta_demographics_table = pd.DataFrame(index=self.geoids, columns=self.demo_codes.keys())
 
         for d in self.demo_codes.keys():
@@ -60,7 +67,7 @@ class calculator:
         # decide which color line will represent each demographic.
         # doing this makes it easier to look at multiple distributions --
         # it saves one the trouble of re-reading the legend each time
-        col_list = ['c','y','g','r','m','k','c']
+        col_list = ['c','r','y','g','m','k']
         self.demographic_labels.sort()
         for x in self.demographic_labels:
             if len(col_list) > 0:
@@ -68,10 +75,10 @@ class calculator:
             else:
                 # if we assign a demographic "None" as a color,
                 # that really means we're going to let matplotlib
-                # automatically assign a color
+                # automatically assign a color later
                 self.line_colors[x] = None
 
-    def make_table(self, output_path, castastime=False):
+    def make_averages_table(self, output_path, castastime=False):
 
         table = pd.DataFrame(index=self.demographic_labels, columns=self.request_types)
         for d in self.demographic_labels:
@@ -92,7 +99,302 @@ class calculator:
         table.to_csv(output_path, index=True)
 
 
-    def estimate_distribution(self, code, col, title_prefix, x_axis_label,write_path_prefix, scale=1, lower_percentile=0, upper_percentile=100):
+    def load_kernels(self,col, categories, weight_fn, weight_fn_arg, scale=1):
+
+        for code in self.request_types:
+
+            self.kernels[code] = {}
+
+            frame = pd.read_csv('data preparation/311 data by request type/311_' + code + ".csv",
+                                dtype={'CITY': np.str, 'STATE': np.str, 'ZIP_CODE': np.str,
+                                       'STREET_NUMBER': np.str, 'LEGACY_SR_NUMBER': np.str,
+                                       'PARENT_SR_NUMBER': np.str, 'SANITATION_DIVISION_DAYS': np.str,
+                                       'BLOCK_GROUP': np.str},
+                                index_col=0)
+            if weight_fn == self.assign_weights_based_on_bg_demos:
+                frame = frame[frame['BLOCK_GROUP'] != 'n']
+            frame['scaled_vals'] = frame[col] / scale
+
+            for category in categories:
+
+                self.kernels[code][category] = {}
+
+                # get weight each point via per-block group demographic data
+                weights = frame.apply(lambda row: weight_fn(category, row, weight_fn_arg), axis=1)
+
+                # figurue out how many "people" we have
+                effective_n = weights.sum().round(4)
+
+                self.kernels[code][category]['n'] = effective_n
+
+                # don't make a kernel if there's not enough "weight"/ data
+                if effective_n <= 1:
+                    self.kernels[code][category]['k'] = 'N/A'
+                    continue
+
+                # do a density estimate to get a kernel
+                try:
+                    kernel = gaussian_kde(frame['scaled_vals'], weights=weights)
+                    self.kernels[code][category]['k'] = kernel
+                except np.linalg.LinAlgError:
+                    print(f'singular matrix for data from column {col}, code {code}, category {category}')
+                    self.kernels[code][category]['k'] = 'N/A'
+
+
+    def draw_charts(self, col,
+                                   title_prefix, x_axis_label, write_path_prefix,
+                                   categories, colors,
+                                   scale=1, lower_percentile=0, upper_percentile=100,
+                                   graph_type='pdf',legend_cols=1,y_axis_label=None):
+
+        code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
+
+        for code in self.request_types:
+
+
+            frame = pd.read_csv('data preparation/311 data by request type/311_' + code + ".csv",
+                                dtype={'CITY': np.str, 'STATE': np.str, 'ZIP_CODE': np.str,
+                                       'STREET_NUMBER': np.str, 'LEGACY_SR_NUMBER': np.str,
+                                       'PARENT_SR_NUMBER': np.str, 'SANITATION_DIVISION_DAYS': np.str,
+                                       'BLOCK_GROUP': np.str},
+                                index_col=0)
+
+            frame['scaled_vals'] = frame[col] / scale
+
+            # figure out the scale the graph should have
+            min_x = frame['scaled_vals'].quantile(q=lower_percentile / 100)
+            max_x = frame['scaled_vals'].quantile(q=upper_percentile / 100)
+
+            if min_x == max_x:
+                print(f'for code {code}, column {col}, '
+                      f'lower percentile {lower_percentile} and upper percentile {upper_percentile},'
+                      f' data has same minimum and maximum value: {min_x} -- so cannot make a distribution')
+                continue
+
+
+            # get the matplotlib objects needed to make the graph
+            fig, ax = plt.subplots(figsize=(6, 6.5))
+
+            # draw a different line for each demographic
+            for c in categories:
+
+                if self.kernels[code][c]['k'] != 'N/A':
+
+                    kernel = self.kernels[code][c]['k']
+                    effective_n = self.kernels[code][c]['n']
+                    # make points to evaluate the kernel on
+                    ind = np.linspace(min_x, max_x, 200)
+
+                    # create the label for the kernel
+                    label = f'{c} (n = {effective_n})'
+
+                    # plot the kernel as a probability density function, or as a cumulative distribution function
+                    # assigning the line a color if possible
+
+                    if graph_type == 'cdf' or graph_type == 'quantile plot':
+                        # find the cdf (a quantile plot is essentially the inverse of a cdf)
+                        # the method "integrate_box_1d" gives the area under the pdf between the first and second argument
+                        # so the following line of code gives a set of points representing the cdf
+                        cdf_points = [kernel.integrate_box_1d(np.NINF, x) for x in ind]
+                        # (np.NINF is a constant representing negative infinity)
+
+
+                        x_axis_points = ind
+                        y_axis_points = cdf_points
+
+                        # if we're plotting a quantile plot (i.e. the inverse of the cdf),
+                        # flip which points are put on the x axis and which are put on the y axis
+                        if graph_type == 'quantile plot':
+                            temp = x_axis_points
+                            x_axis_points = y_axis_points
+                            y_axis_points = temp
+
+                        # plot the cdf/ quantile plot with that demographic's color, if we were able to assign it one
+                        if colors[c] is not None:
+                            ax.plot(x_axis_points, y_axis_points, label=label,
+                                    color=colors[c])
+                        else:
+                            ax.plot(x_axis_points, y_axis_points, label=label)
+
+                    if graph_type == 'pdf':
+                        #plot a pdf with that demographic's color, if we were able to assign it one
+                        #kernel.evaluate(ind) evaluates the kernel on each point in ind and returns those results as a list
+                        if colors[c] is not None:
+                            ax.plot(ind, kernel.evaluate(ind), label=label,
+                                    color=colors[c])
+                        else:
+                            ax.plot(ind, kernel.evaluate(ind), label=label)
+
+            # formatting stuff
+            ax.legend()
+            title = f'{title_prefix} for {code_dict[code]}  requests (code {code})'
+            if upper_percentile != 100 or lower_percentile != 0:
+                if lower_percentile != 0 and upper_percentile !=0:
+                    title += f', graph covers {lower_percentile}th to {upper_percentile}th quantile'
+                elif upper_percentile != 0:
+                    title += f', graph covers {upper_percentile}th quantile'
+                else:
+                    title += f', graph starts at {lower_percentile}th quantile'
+            plt.title('\n'.join(wrap(title, 60)))
+            plt.xlabel(x_axis_label)
+            if y_axis_label is not None:
+                plt.ylabel(y_axis_label)
+            box = ax.get_position()
+            ax.set_position([box.x0, box.y0 + box.height * 0.2, box.width, box.height * 0.80])
+            ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), fancybox=True, shadow=True, ncol=legend_cols)
+
+            # name the file and save as an image
+
+            # first, take the slashes out of the code description
+            code_description = code_dict[code].replace('/', '(slash)')
+            fname = f'{write_path_prefix}{code_description}'
+            if upper_percentile != 100 or lower_percentile != 0:
+                if lower_percentile != 0:
+                    fname += f'_{lower_percentile}'
+                fname += f'_{upper_percentile}'
+            fname += '.png'
+            plt.savefig(fname)
+            plt.close('all')
+
+
+    def estimate_distributions_new(self, col,
+                                   title_prefix, x_axis_label, write_path_prefix,
+                                   categories, colors, weight_fn, weight_fn_arg,
+                                   scale=1, lower_percentile=0, upper_percentile=100,
+                                   graph_type='pdf',legend_cols=1,y_axis_label=None):
+        code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
+
+
+
+        for code in self.request_types:
+
+
+            frame = pd.read_csv('data preparation/311 data by request type/311_' + code + ".csv",
+                                dtype={'CITY': np.str, 'STATE': np.str, 'ZIP_CODE': np.str,
+                                       'STREET_NUMBER': np.str, 'LEGACY_SR_NUMBER': np.str,
+                                       'PARENT_SR_NUMBER': np.str, 'SANITATION_DIVISION_DAYS': np.str,
+                                       'BLOCK_GROUP': np.str},
+                                index_col=0)
+
+            if weight_fn == self.assign_weights_based_on_bg_demos:
+                frame = frame[frame['BLOCK_GROUP'] != 'n']
+
+            frame['scaled_vals'] = frame[col] / scale
+
+            # figure out the scale the graph should have
+            min_x = frame['scaled_vals'].quantile(q=lower_percentile / 100)
+            max_x = frame['scaled_vals'].quantile(q=upper_percentile / 100)
+
+            if min_x == max_x:
+                print(f'for code {code}, column {col}, '
+                      f'lower percentile {lower_percentile} and upper percentile {upper_percentile},'
+                      f' data has same minimum and maximum value: {min_x} -- so cannot make a distribution')
+                continue
+
+
+            # get the matplotlib objects needed to make the graph
+            fig, ax = plt.subplots(figsize=(6, 6.5))
+
+            # make a different PDF/CDF for each demographic
+            for c in categories:
+
+                # get weight each point via per-block group demographic data
+                weights = frame.apply(lambda row: weight_fn(c, row, weight_fn_arg), axis=1)
+
+                # figurue out how many "people" we have
+                effective_n = weights.sum().round(4)
+
+                # only make a distribution if there's enough data to do so
+                if effective_n > 1:
+
+                    # do a density estimate to get a kernel
+                    try:
+                        kernel = gaussian_kde(frame['scaled_vals'], weights=weights)
+                    except np.linalg.LinAlgError:
+                        print(f'singular matrix for data from column {col}, code {code}, category {c}')
+                        continue
+
+
+                    # make points to evaluate the kernel on
+                    ind = np.linspace(min_x, max_x, 200)
+
+                    # create the label for the kernel
+                    label = f'{c} (n = {effective_n})'
+
+                    # plot the kernel as a probability density function, or as a cumulative distribution function
+                    # assigning the line a color if possible
+
+                    if graph_type == 'cdf' or graph_type == 'quantile plot':
+                        # find the cdf (a quantile plot is essentially the inverse of a cdf)
+                        # the method "integrate_box_1d" gives the area under the pdf between the first and second argument
+                        # so the following line of code gives a set of points representing the cdf
+                        cdf_points = [kernel.integrate_box_1d(np.NINF, x) for x in ind]
+                        # (np.NINF is a constant representing negative infinity)
+
+                        x_axis_points = ind
+                        y_axis_points = cdf_points
+
+                        # if we're plotting a quantile plot (i.e. the inverse of the cdf),
+                        # flip which points are put on the x axis and which are put on the y axis
+                        if graph_type == 'quantile plot':
+                            temp = x_axis_points
+                            x_axis_points = y_axis_points
+                            y_axis_points = temp
+
+                        # plot the cdf/ quantile plot with that demographic's color, if we were able to assign it one
+                        if colors[c] is not None:
+                            ax.plot(x_axis_points, y_axis_points, label=label,
+                                    color=colors[c])
+                        else:
+                            ax.plot(x_axis_points, y_axis_points, label=label)
+
+                    if graph_type == 'pdf':
+                        #plot a pdf with that demographic's color, if we were able to assign it one
+                        #kernel.evaluate(ind) evaluates the kernel on each point in ind and returns those results as a list
+                        if colors[c] is not None:
+                            ax.plot(ind, kernel.evaluate(ind), label=label,
+                                    color=colors[c])
+                        else:
+                            ax.plot(ind, kernel.evaluate(ind), label=label)
+
+            # formatting stuff
+            ax.legend()
+            title = f'{title_prefix} for {code_dict[code]}  requests (code {code})'
+            if upper_percentile != 100 or lower_percentile != 0:
+                if lower_percentile != 0 and upper_percentile !=0:
+                    title += f', graph covers {lower_percentile}th to {upper_percentile}th percentile'
+                elif upper_percentile != 0:
+                    title += f', graph covers {upper_percentile}th percentile'
+                else:
+                    title += f', graph starts at {lower_percentile}th percentile'
+            plt.title('\n'.join(wrap(title, 60)))
+            plt.xlabel(x_axis_label)
+            if y_axis_label is not None:
+                plt.ylabel(y_axis_label)
+            box = ax.get_position()
+            ax.set_position([box.x0, box.y0 + box.height * 0.2, box.width, box.height * 0.80])
+            ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), fancybox=True, shadow=True, ncol=legend_cols)
+
+            # name the file and save as an image
+
+            # first, take the slashes out of the code description
+            code_description = code_dict[code].replace('/', '(slash)')
+            fname = f'{write_path_prefix}{code_description}'
+            if upper_percentile != 100 or lower_percentile != 0:
+                if lower_percentile != 0:
+                    fname += f'_{lower_percentile}'
+                fname += f'_{upper_percentile}'
+            fname += '.png'
+            plt.savefig(fname)
+            plt.close('all')
+
+    def assign_weights_based_on_bg_demos(self, demo, row, dummy_arg):
+        return self.meta_demographics_table.loc[row['BLOCK_GROUP'], demo + ' ratio']
+
+    def estimate_distribution(self, code, col,
+                              title_prefix, x_axis_label, write_path_prefix,
+                              scale=1, lower_percentile=0, upper_percentile=100,
+                              cdf=False):
 
         # get a dictionary mapping short request codes to their human-readable names
         code_dict = pd.read_csv('data preparation/service_request_short_codes.csv', index_col=0).to_dict()['SR_TYPE']
@@ -119,7 +421,9 @@ class calculator:
         max_x = frame['scaled_vals'].quantile(q=upper_percentile / 100)
 
         if min_x == max_x:
-            print(f'for code {code}, column {col}, lower percentile {lower_percentile} and upper percentile {upper_percentile}, data has same minimum and maximum value: {min_x} -- so cannot make a distribution')
+            print(f'for code {code}, column {col}, '
+                  f'lower percentile {lower_percentile} and upper percentile {upper_percentile},'
+                  f' data has same minimum and maximum value: {min_x} -- so cannot make a distribution')
             return
 
 
@@ -137,49 +441,83 @@ class calculator:
 
             # only make a distribution if there's enough data to do so
             if effective_n > 1:
+
                 # do a density estimate to get a kernel
                 kernel = gaussian_kde(frame['scaled_vals'], weights=weights)
+
                 # make points to evaluate the kernel on
                 ind = np.linspace(min_x, max_x, 200)
+
                 # create the label for the kernel
                 label = f'{d} (n = {effective_n})'
-                # plot the kernel as a probability density function,
+
+                # plot the kernel as a probability density function, or as a cumulative distribution function
                 # assigning the line a color if possible
-                if self.line_colors[d] is not None:
-                    ax.plot(ind, kernel.evaluate(ind), label=label, color=self.line_colors[d])
+
+                if cdf:
+                    # plot a cdf.
+                    # the method "integrate_box_1d" gives the area under the pdf between the first and second argument
+                    # so the following line of code gives a set of points representing the cdf
+                    cdf_points = [kernel.integrate_box_1d(np.NINF, x) for x in ind]
+                    # (np.NINF is a constant representing negative infinity)
+
+
+                    # plot the cdf with that demographic's color, if we were able to assign it one
+                    if self.line_colors[d] is not None:
+                        ax.plot(ind, cdf_points, label=label,
+                                color=self.line_colors[d])
+                    else:
+                        ax.plot(ind, cdf_points, label=label)
+
                 else:
-                    ax.plot(ind, kernel.evaluate(ind), label=label)
+                    #plot a pdf with that demographic's color, if we were able to assign it one
+                    #kernel.evaluate(ind) evaluates the kernel on each point in ind and returns those results as a list
+                    if self.line_colors[d] is not None:
+                        ax.plot(ind, kernel.evaluate(ind), label=label,
+                                color=self.line_colors[d])
+                    else:
+                        ax.plot(ind, kernel.evaluate(ind), label=label)
+
 
         # formatting stuff
         ax.legend()
         title = f'{title_prefix} for {code_dict[code]}  requests (code {code})'
         if upper_percentile != 100 or lower_percentile != 0:
-            title += f', graph covers {upper_percentile}th percentile'
+            if lower_percentile != 0 and upper_percentile !=0:
+                title += f', graph covers {lower_percentile}th to {upper_percentile}th percentile'
+            elif upper_percentile != 0:
+                title += f', graph covers {upper_percentile}th percentile'
+            else:
+                title += f', graph starts at {lower_percentile}th percentile'
         plt.title('\n'.join(wrap(title, 60)))
         plt.xlabel(x_axis_label)
         box = ax.get_position()
         ax.set_position([box.x0, box.y0 + box.height * 0.2, box.width, box.height * 0.80])
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), fancybox=True, shadow=True)
 
-        # make the filename and save as an image
+        # name the file and save as an image
 
         # first, take the slashes out of the code description
         code_description = code_dict[code].replace('/', '(slash)')
         fname = f'{write_path_prefix}{code_description}'
         if upper_percentile != 100 or lower_percentile != 0:
+            if lower_percentile != 0:
+                fname += f'_{lower_percentile}'
             fname += f'_{upper_percentile}'
         fname += '.png'
         plt.savefig(fname)
         plt.close('all')
 
-
-    def estimate_distributions_for_all_requests(self, col, title_prefix, x_axis_label,write_path_prefix, scale=1, lower_percentile=0, upper_percentile=100):
+    def estimate_distributions_for_all_requests(self, col, title_prefix, x_axis_label,write_path_prefix, scale=1,
+                                                lower_percentile=0, upper_percentile=100,
+                                                cdf=False):
 
         # make a graph showing PDFs by demographic for all request types
         for code in self.request_types:
             print(code)
-            self.estimate_distribution(code, col, title_prefix, x_axis_label, write_path_prefix, scale=scale, upper_percentile=upper_percentile, lower_percentile=lower_percentile)
-
+            self.estimate_distribution(code, col, title_prefix, x_axis_label, write_path_prefix, scale=scale,
+                                       upper_percentile=upper_percentile, lower_percentile=lower_percentile,
+                                       cdf=cdf)
 
     def estimate_distributions_noweights(self, threshold_n, x_axis_label, scale, write_path_prefix, title_prefix):
 
@@ -241,7 +579,7 @@ class calculator:
 
 input_path_prefix = 'data preparation/average x by block group/queue_displacement_'
 output_path_prefix = 'avg_queue_displacement_'
-bucket_types = ['1SEC', '1HR', '3HR', '6HR', '24HR']
+bucket_types = ['1HR', '6HR', '24HR'] #1SEC, 3HR
 
 a1 = ['data preparation/average x by block group/bg_averages_raw_time.csv']
 a2 = ['avg_raw_wait_time.csv']
@@ -249,33 +587,124 @@ a2 = ['avg_raw_wait_time.csv']
 path_info = zip([input_path_prefix + x + '.csv' for x in bucket_types], [output_path_prefix + y + '.csv' for y in bucket_types])
 
 
+with open('sides.csv') as sides_f:
+    s_reader = csv.reader(sides_f)
+    side_areanum_map = {row[0]: [int(x) for x in row[1:]] for row in s_reader}
+with open('community_areas.csv') as area_f:
+    a_reader = csv.reader(area_f)
+    number_area_map = {int(row[0]): row[1:] for row in a_reader}
+with open('meta_sides.csv') as meta_f:
+    m_reader = csv.reader(meta_f)
+    metaside_side_map = {row[0]: row[1:] for row in m_reader}
+
+
+def side_weights(label, row, side_areanum_map):
+    areanum = row['COMMUNITY_AREA']
+    areas = side_areanum_map[label]
+    return int(areanum in areas)
+
+def metaside_weights(label, row, double):
+    side_areanum_map = double[0]
+    metaside_side_map = double[1]
+    areanum = row['COMMUNITY_AREA']
+    areas = list(pd.core.common.flatten([side_areanum_map[side] for side in metaside_side_map[label]]))
+    return int(areanum in areas)
+
+col_list = ['c','r','y','g','m','k','c']
+metasides = list(metaside_side_map.keys())
+metaside_color_map = {}
+for m in metasides:
+    metaside_color_map[m] = col_list.pop(0)
+
+sides = list(side_areanum_map.keys())
+sides_color_map = {}
+for s in sides:
+    if len(col_list) > 0:
+        sides_color_map[s] = col_list.pop(0)
+    else:
+        sides_color_map[s] = None
+
+def latitude_weight(label, row, dummy_arg):
+    min_lat = 41.644567935
+    max_lat = 42.022945905
+
+    range = max_lat - min_lat
+    normalized_lat = (row['LATITUDE'] - min_lat) / range
+    if label == 'North':
+        return normalized_lat
+    elif label == 'South':
+        return 1 - normalized_lat
+    raise NotImplementedError
+
+#
+# for x in [41.644567935, 42.022945905, 41.7, 42.01]:
+#     print(f'{x}, North: {latitude_weight("North",x,0)}')
+#     print(f'{x}, South: {latitude_weight("South",x,0)}')
+
+
 c = calculator()
 
-for b in bucket_types:
-    c.estimate_distributions_for_all_requests(f'CR_BUCKET_{b}_DISPLACEMENT',
-                                              f'queue displacement distribution-{b}- ',
-                                              'displacement (late = positive, early = negative)',
-                                              f'queue displacement distributions/{b}/',
-                                              upper_percentile=95)
+# c.estimate_distributions_new('DELTA',
+#                              'Wait time PDF',
+#                              'Time (days)',
+#                              'queue displacement distributions/by geography/consolidated sides/PDFs/',
+#                              metasides, metaside_color_map, metaside_weights, (side_areanum_map, metaside_side_map),
+#                              upper_percentile=95,
+#                              graph_type='pdf', legend_cols=2)
 
-# c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/')
-# c.estimate_distributions_for_all_requests('DELTA', 60 * 60 * 24,'Wait time distribution ', 'Time (days)','wait time distributions/', graph_scale_percentile=95)
 
-# c.load_metric_table(a1[0])
-#c.estimate_distributions(4, 'wait time (days)',24 * 60 * 60, 'wait time distributions -- fuzzy method/wait_time_dist_', 'Wait time distribution ')
+#########################~~~~~~~~~~~
 
-# for x in bucket_types:
-#     c.load_metric_table(input_path_prefix + x + '.csv')
-#     c.estimate_distributions(4, 'displacement in queue (positive = pushed back)', 1, 'queue displacement distributions/' + x + ' buckets/displacement_dist_' + x + '_', 'displacement distribution (' + x + ' buckets)')
-#for l in bucket_types:
+c.load_kernels('DELTA',c.demographic_labels,c.assign_weights_based_on_bg_demos,0, scale=24*60*60)
 
-# for x in path_info:
-#     print(x[0], x[1])
-#
-#     c.load_metric_table(x[0])
-#
-#     c.make_table(x[1])
+print('done loading')
 
-# c.load_metric_table(a1[0])
-# c.make_table(a2[0], castastime=True)
+for P in [100, 95]:
+    # c.draw_charts('DELTA',
+    #               'Wait time CDF','Time (days)',
+    #               'wait time distributions/by geography/all sides/CDFs/',
+    #               sides, sides_color_map,upper_percentile=P, graph_type='cdf',
+    #               legend_cols=2,
+    #               scale=24 * 60 * 60,
+    #               y_axis_label=None)
+    #
+    # c.draw_charts('DELTA',
+    #               'Wait time PDF','Time (days)',
+    #               'wait time distributions/by geography/all sides/PDFs/',
+    #               sides, sides_color_map,upper_percentile=P, graph_type='pdf',
+    #               legend_cols=2,
+    #               scale=24 * 60 * 60,
+    #               y_axis_label=None)
 
+    c.draw_charts('DELTA',
+                  'Wait time Quantile Plot','Quantile',
+                  'wait time distributions/by race and ethnicity/Quantile Plots/',
+                  c.demographic_labels, c.line_colors, upper_percentile=P, graph_type='quantile plot',
+                  legend_cols=1,
+                  scale=24 * 60 * 60,
+                  y_axis_label='Time (days)')
+
+
+# c.estimate_distributions_new('DELTA','Wait time quantile plot','quantile','Geography/consolidated sides/Quantile Plots/',
+#                              metasides, metaside_color_map, metaside_weights,(side_areanum_map, metaside_side_map),
+#                              scale= 24 * 60 * 60,
+#                              upper_percentile=100,
+#                              graph_type='quantile plot', legend_cols=2,
+#                              y_axis_label='Time (days)')
+
+
+# c.estimate_distributions_new('DELTA','Wait time quantile plot','quantile','Geography/latitude/Quantile Plots/',
+#                              ['North','South'], {'North':'r','South':'b'},latitude_weight,0,
+#                              scale= 24 * 60 * 60,
+#                              upper_percentile=100,
+#                              graph_type='quantile plot', legend_cols=1,
+#                              y_axis_label='Time (days)')
+
+
+# c.estimate_distributions_new('CR_BUCKET_1HR_DISPLACEMENT',
+#                              'Queue displacement PDF',
+#                              'Queue displacement',
+#                              'queue displacement distributions/by geography/consolidated sides/PDFs/',
+#                              metasides, metaside_color_map, metaside_weights, (side_areanum_map, metaside_side_map),
+#                              upper_percentile=100,
+#                              graph_type='pdf', legend_cols=2)
